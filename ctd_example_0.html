@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTD</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://code.highcharts.com/highcharts.js"></script>
+    <style>
+        html, body, #map {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 300px;
+        }
+    </style>
+</head>
+<body>    
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        var map = L.map('map').setView([42.88, -8.55], 8);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        let samplingGeometryHeightMin = "1";
+        let samplingGeometryHeightMax = "2";
+        let locationNames = ['Rande', 'Ares', 'Vilagarcía', 'Muros'];
+        let phenomenonTimeStart = "2019-01-01T00:00:00Z";
+        let phenomenonTimeEnd = "2020-01-01T00:00:00Z";
+
+        // Construir el cql_filter
+        let cqlFilter = `sampling_geometry_height > ${samplingGeometryHeightMin} AND sampling_geometry_height < ${samplingGeometryHeightMax} 
+            AND nombre IN (${locationNames.map(name => `'${name}'`).join(',')}) AND phenomenon_time > '${phenomenonTimeStart}' 
+            AND phenomenon_time < '${phenomenonTimeEnd}'`;
+
+
+        var wfsBaseUrl = "https://tec.citius.usc.es/ccmm/geoserver/ccmm/ows";
+        var wfsParams = {
+            service: "WFS",
+            version: "1.0.0",
+            request: "GetFeature",
+            typeName: "ccmm:observacion_ctd_wfs",
+            outputFormat: "application/json",
+            SRSName: "EPSG:4326",
+            cql_filter: cqlFilter,
+            sortBy: "phenomenon_time"
+        };
+        var wfsUrl = wfsBaseUrl + "?" + new URLSearchParams(wfsParams).toString();
+
+        fetch(wfsUrl)
+            .then(response => response.json())
+            .then(data => {
+
+                var groupedFeatures = {};
+                data.features.forEach(feature => {
+                    var coordinates = feature.geometry.coordinates.join(",");
+                    if (!groupedFeatures[coordinates]) {
+                        groupedFeatures[coordinates] = [];
+                    }
+                    groupedFeatures[coordinates].push(feature);
+                });
+
+                // Añadir cada grupo de puntos al mapa
+                Object.keys(groupedFeatures).forEach(coordinates => {
+                    var features = groupedFeatures[coordinates];
+                    var latlng = [features[0].geometry.coordinates[1], features[0].geometry.coordinates[0]];
+
+                    L.circleMarker(latlng, {
+                        radius: 8,
+                        fillColor: "#007bff",
+                        color: "#ffffff",
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    }).addTo(map).on('click', function () {
+                        // Crear un contenedor para el gráfico
+                        var chartContainer = document.createElement('div');
+                        chartContainer.className = 'chart-container';
+                        chartContainer.id = 'chart-' + coordinates.replace(/,/g, '-');
+
+                        // Preparar los datos para el gráfico
+                        var labels = features.map(f => new Date(f.properties.phenomenon_time).toLocaleTimeString());
+                        var salinidadData = features.map(f => f.properties.salinidad);
+                        var nombre = features.map(f => f.properties.nombre);
+                        // Crear el gráfico con Highcharts
+                        Highcharts.chart(chartContainer, {
+                            chart: {
+                                type: 'line'
+                            },
+                            title: {
+                                text: nombre[0]
+                            },
+                            xAxis: {
+                                categories: labels,
+                                title: {
+                                    text: 'Phenomenon Time'
+                                },
+                                labels: {
+                                    rotation: 45
+                                }
+                            },
+                            yAxis: {
+                                title: {
+                                    text: 'Salinidad'
+                                }
+                            },
+                            series: [{
+                                name: 'Salinidad',
+                                data: salinidadData
+                            }]
+                        });
+
+                        // Mostrar el gráfico en un popup
+                        L.popup()
+                            .setLatLng(latlng)
+                            .setContent(chartContainer)
+                            .openOn(map);
+                    });
+                });
+            })
+            .catch(error => console.error('Error al cargar datos WFS:', error));
+    </script>
+</body>
+</html>
